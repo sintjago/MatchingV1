@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Matching Game</title>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background-color: #f4f4f4;
+            height: 100vh;
+        }
+        canvas {
+            border: 1px solid #333;
+            background-color: #fff;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-top: 10px;
+            width: 100%;
+        }
+        .controls {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-top: 10px;
+            flex-wrap: wrap; /* Ensure buttons wrap if screen size is small */
+        }
+        .buttons {
+            display: flex;
+            justify-content: center;
+            margin-top: 10px;
+            gap: 5px; /* Shrink space between buttons */
+        }
+        .container textarea {
+            width: 90%;
+            max-width: 600px;
+            height: 80px;
+            resize: none;
+            padding: 10px;
+            font-family: monospace;
+        }
+        .container button, .container select {
+            padding: 8px 15px;  /* Reduced padding to fit within canvas */
+            background-color: #333;
+            color: #fff;
+            border: none;
+            cursor: pointer;
+        }
+        .container button:hover, .container select:hover {
+            background-color: #555;
+        }
+        .instructions {
+            font-size: 14px;
+            color: #666;
+            margin-left: 10px;
+        }
+        .pair-controls {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-top: 10px;
+            gap: 5px;  /* Shrink space between pair control buttons */
+        }
+        .timer-container {
+            display: flex;
+            align-items: center;
+            margin-left: 10px;
+            gap: 5px;  /* Shrink space between timer elements */
+        }
+        .timer-container input {
+            width: 70px; /* Shrink input width */
+            padding: 5px;
+            text-align: center;
+        }
+        @media (max-width: 768px) {
+            canvas {
+                width: 90%;
+                height: 300px;
+            }
+            .container textarea {
+                height: 60px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+
+    <div class="controls">
+        <select id="language-select">
+            <option value="ar-SA">Arabic</option>
+            <option value="en-US" selected>English</option>
+            <option value="fr-FR">French</option>
+            <option value="de-DE">German</option>
+            <option value="hi-IN">Hindi</option>
+            <option value="ru-RU">Russian</option>
+            <option value="es-ES">Spanish</option>
+        </select>
+        <div class="instructions">Find the pairs. Click a card to flip. Drag to move.</div>
+    </div>
+
+    <div class="pair-controls">
+        <button id="add1-btn">+1 Pair</button>
+        <button id="add5-btn">+5 Pairs</button>
+        <button id="remove1-btn">-1 Pair</button>
+        <button id="remove5-btn">-5 Pairs</button>
+        <button id="shuffle-btn">Shuffle</button>
+        <button id="grid-btn">Grid</button>
+        <button id="reset-btn">Reset</button>
+        <div class="timer-container">
+            <input id="timer-input" type="text" value="01:00">
+            <button id="start-timer-btn">Start</button>
+            <button id="stop-timer-btn">Stop</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <textarea id="json-input" placeholder='Enter JSON format here (e.g., [{"term": "Perro", "definition": "Animal"}])'></textarea>
+        <button id="update-cards-btn">Update Cards</button>
+        <p>Only 5 pairs are added at random to start.</p>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        canvas.width = Math.min(window.innerWidth * 0.8, 600);
+        canvas.height = Math.min(window.innerHeight * 0.6, 400);
+
+        const cardWidth = 120;
+        const cardHeight = 80;
+        const padding = 10;
+        const distinctColors = [
+            '#FF5733', '#33FF57', '#3357FF', '#FF33A1', '#33FFF3', '#FF8C33', '#8C33FF', '#33FF8C', '#FF3333', '#3333FF',
+            '#A1FF33', '#FF5733', '#33A1FF', '#FF33FF', '#33FFA1', '#5733FF', '#FF33A1', '#F3FF33', '#FF8CFF', '#8CFF33'
+        ];
+        let cards = [];
+        let availablePairs = [
+            { term: "Perro", definition: "Animal domesticado, leal y común como mascota." },
+            { term: "Montaña", definition: "Gran elevación natural del terreno." },
+            { term: "Mar", definition: "Gran masa de agua salada que cubre gran parte de la superficie terrestre." },
+            { term: "Árbol", definition: "Planta de tronco leñoso que vive muchos años." },
+            { term: "Cielo", definition: "Espacio que está sobre nosotros, donde están las nubes y el sol." },
+            { term: "Flor", definition: "Parte de la planta donde se produce la semilla." },
+            { term: "Río", definition: "Corriente de agua continua y más o menos caudalosa que fluye en una dirección." },
+            { term: "Lago", definition: "Gran masa de agua rodeada de tierra." },
+            { term: "Nieve", definition: "Agua helada que cae de las nubes en forma de cristales blancos." },
+            { term: "Sol", definition: "Estrella luminosa alrededor de la cual gira la Tierra." }
+        ];
+
+        let selectedPairs = [];
+        let selectedCards = [];
+        let draggingCard = null;
+        let offsetX, offsetY;
+        let matchedPairs = 0;
+        let topZIndex = 0;
+        let lockFlip = false;  // Lock flipping while two cards are being processed
+        let timerInterval = null;
+        let timeRemaining = 60;
+
+        const synth = window.speechSynthesis;
+
+        class Card {
+            constructor(text, x, y, fullText, isTerm = false) {
+                this.text = text;
+                this.fullText = fullText;
+                this.x = x;
+                this.y = y;
+                this.width = cardWidth;
+                this.height = cardHeight;
+                this.isFlipped = false;
+                this.isMatched = false;
+                this.isTerm = isTerm;  // Flag to know if the card is a term or a definition
+                this.matchColor = null;  // Color after match
+                this.showFullText = false;
+                this.zIndex = topZIndex++;
+            }
+
+            draw() {
+                ctx.save();
+                if (this.isMatched && this.matchColor) {
+                    ctx.fillStyle = this.matchColor;
+                } else {
+                    ctx.fillStyle = this.isFlipped ? "#FFD700" : "#aaa";
+                }
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+                ctx.strokeStyle = "#000";
+                ctx.lineWidth = 2;
+                ctx.strokeRect(this.x, this.y, this.width, this.height);
+
+                if (this.isFlipped || this.isMatched) {
+                    ctx.fillStyle = "#000";
+                    ctx.font = "12px Arial";
+                    ctx.textAlign = "left";
+                    ctx.textBaseline = "top";
+
+                    if (this.showFullText) {
+                        this.drawFullText(ctx, this.fullText, this.x + padding, this.y + padding, this.width - 2 * padding);
+                    } else {
+                        this.drawText(ctx, this.text, this.x + padding, this.y + padding, this.width - 2 * padding);
+                    }
+                }
+                ctx.restore();
+            }
+
+            drawText(context, text, x, y, maxWidth) {
+                const words = text.split(' ');
+                let line = '';
+                const lineHeight = 14;
+
+                for (let n = 0; n < words.length; n++) {
+                    const testLine = line + words[n] + ' ';
+                    const metrics = context.measureText(testLine);
+                    const testWidth = metrics.width;
+
+                    if (testWidth > maxWidth && n > 0) {
+                        context.fillText(line, x, y);
+                        line = words[n] + ' ';
+                        y += lineHeight;
+
+                        if (y + lineHeight > this.y + this.height - padding) {
+                            context.fillText(line.trim() + '...', x, y);
+                            return;
+                        }
+                    } else {
+                        line = testLine;
+                    }
+                }
+                context.fillText(line, x, y);
+            }
+
+            drawFullText(context, text, x, y, maxWidth) {
+                const words = text.split(' ');
+                let line = '';
+                const lineHeight = 14;
+
+                for (let n = 0; n < words.length; n++) {
+                    const testLine = line + words[n] + ' ';
+                    const metrics = context.measureText(testLine);
+                    const testWidth = metrics.width;
+
+                    if (testWidth > maxWidth && n > 0) {
+                        context.fillText(line, x, y);
+                        line = words[n] + ' ';
+                        y += lineHeight;
+                    } else {
+                        line = testLine;
+                    }
+                }
+                context.fillText(line, x, y);
+            }
+
+            contains(mx, my) {
+                return mx > this.x && mx < this.x + this.width && my > this.y && my < this.y + this.height;
+            }
+
+            flip() {
+                if (!this.isMatched && !this.isFlipped) {
+                    this.isFlipped = true;
+                    return true;  // Return true if flip succeeded
+                }
+                return false;  // Return false if flip was not performed
+            }
+
+            toggleFullText() {
+                this.showFullText = !this.showFullText;
+            }
+
+            speak() {
+                const language = document.getElementById("language-select").value;  // Always use current language
+                const utterance = new SpeechSynthesisUtterance(this.text);
+                utterance.lang = language;
+                synth.cancel(); // Stop any ongoing speech
+                synth.speak(utterance);
+            }
+        }
+
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+        }
+
+        function addPairs(count) {
+            const remainingPairs = availablePairs.filter(pair => !selectedPairs.includes(pair));
+            shuffleArray(remainingPairs);
+            const pairsToAdd = remainingPairs.slice(0, count);
+
+            pairsToAdd.forEach((pair) => {
+                // Add term card
+                const x = Math.random() * (canvas.width - cardWidth);
+                const y = Math.random() * (canvas.height - cardHeight);
+                cards.push(new Card(pair.term, x, y, pair.term, true));
+
+                // Add definition card
+                const defX = Math.random() * (canvas.width - cardWidth);
+                const defY = Math.random() * (canvas.height - cardHeight);
+                cards.push(new Card(pair.definition.slice(0, 50) + '...', defX, defY, pair.definition, false));
+
+                selectedPairs.push(pair);
+            });
+            draw();  // Redraw the updated board
+        }
+
+        function removePairs(count) {
+            const toRemove = selectedPairs.splice(-count, count);  // Remove pairs from selectedPairs
+
+            toRemove.forEach((pair) => {
+                // Remove both term and definition cards
+                cards = cards.filter(card => card.fullText !== pair.term && card.fullText !== pair.definition);
+            });
+
+            draw();  // Redraw the updated board
+        }
+
+        function shuffleCards() {
+            cards.forEach(card => {
+                card.x = Math.random() * (canvas.width - cardWidth);
+                card.y = Math.random() * (canvas.height - cardHeight);
+            });
+            draw();  // Redraw the shuffled board
+        }
+
+        function arrangeGrid() {
+            const cols = Math.floor(canvas.width / (cardWidth + padding));
+            let x = padding;
+            let y = padding;
+            cards.forEach((card, index) => {
+                card.x = x;
+                card.y = y;
+                x += cardWidth + padding;
+                if ((index + 1) % cols === 0) {
+                    x = padding;
+                    y += cardHeight + padding;
+                }
+            });
+            draw();  // Redraw the grid layout
+        }
+
+        function resetGame() {
+            selectedCards = [];
+            matchedPairs = 0;
+            cards.forEach(card => {
+                card.isFlipped = false;
+                card.isMatched = false;
+                card.matchColor = null;
+            });
+            shuffleCards();  // Shuffle all cards back into random positions
+            draw();  // Redraw the reset game
+        }
+
+        function checkMatch() {
+            if (selectedCards.length === 2) {
+                const [first, second] = selectedCards;
+
+                // Check if one is a term and the other is the corresponding definition
+                if (first.isTerm !== second.isTerm) {
+                    const firstPair = availablePairs.find(pair => pair.term === first.text || pair.definition === first.fullText);
+                    const secondPair = availablePairs.find(pair => pair.term === second.text || pair.definition === second.fullText);
+
+                    if (firstPair && secondPair && (firstPair.term === secondPair.term)) {
+                        const color = distinctColors[matchedPairs % distinctColors.length];
+                        first.isMatched = true;
+                        second.isMatched = true;
+                        first.matchColor = color;
+                        second.matchColor = color;
+                        matchedPairs++;
+                        lockFlip = false;  // Reset the lock after a successful match
+                    } else {
+                        setTimeout(() => {
+                            first.isFlipped = false;
+                            second.isFlipped = false;
+                            draw();
+                            lockFlip = false;  // Unlock flipping after the cards are flipped back
+                        }, 1000);
+                    }
+                } else {
+                    // If they are both terms or both definitions, flip them back
+                    setTimeout(() => {
+                        first.isFlipped = false;
+                        second.isFlipped = false;
+                        draw();
+                        lockFlip = false;  // Unlock flipping after the cards are flipped back
+                    }, 1000);
+                }
+
+                selectedCards = [];
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            // Sort the cards by z-index to ensure the one with the highest z-index is drawn last
+            cards.sort((a, b) => a.zIndex - b.zIndex);
+            cards.forEach(card => card.draw());
+        }
+
+        function startTimer() {
+            const inputValue = document.getElementById("timer-input").value;
+            const [minutes, seconds] = inputValue.split(':').map(Number);
+            timeRemaining = minutes * 60 + seconds;
+
+            if (timerInterval) clearInterval(timerInterval);
+            timerInterval = setInterval(() => {
+                if (timeRemaining <= 0) {
+                    clearInterval(timerInterval);
+                    alert("Time's up!");
+                } else {
+                    timeRemaining--;
+                    const mins = Math.floor(timeRemaining / 60);
+                    const secs = timeRemaining % 60;
+                    document.getElementById("timer-input").value = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+                }
+            }, 1000);
+        }
+
+        function stopTimer() {
+            if (timerInterval) clearInterval(timerInterval);
+        }
+
+        canvas.addEventListener('mousedown', (event) => {
+            if (lockFlip) return;  // Prevent flipping if locked
+
+            const mouseX = event.clientX - canvas.offsetLeft;
+            const mouseY = event.clientY - canvas.offsetTop;
+
+            for (const card of cards) {
+                if (card.contains(mouseX, mouseY)) {
+                    draggingCard = card;
+                    offsetX = mouseX - card.x;
+                    offsetY = mouseY - card.y;
+
+                    // Move the selected card to the top layer
+                    draggingCard.zIndex = topZIndex++;
+                    
+                    if (card.flip()) {  // Ensure the flip happens first
+                        selectedCards.push(card);
+                        card.speak();  // Start speaking only after the card has flipped
+
+                        if (selectedCards.length === 2) {
+                            lockFlip = true;  // Lock flipping until the cards are processed
+                            checkMatch();
+                        }
+                    } else if (card.isMatched) {
+                        card.speak();  // Always allow speaking for matched cards in the current language
+                    }
+                    break;
+                }
+            }
+            draw();
+        });
+
+        canvas.addEventListener('mousemove', (event) => {
+            if (draggingCard) {
+                const mouseX = event.clientX - canvas.offsetLeft;
+                const mouseY = event.clientY - canvas.offsetTop;
+                draggingCard.x = mouseX - offsetX;
+                draggingCard.y = mouseY - offsetY;
+                draw();
+            }
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            draggingCard = null;
+        });
+
+        document.getElementById('add1-btn').addEventListener('click', () => {
+            addPairs(1);
+        });
+
+        document.getElementById('add5-btn').addEventListener('click', () => {
+            addPairs(5);
+        });
+
+        document.getElementById('remove1-btn').addEventListener('click', () => {
+            removePairs(1);
+        });
+
+        document.getElementById('remove5-btn').addEventListener('click', () => {
+            removePairs(5);
+        });
+
+        document.getElementById('shuffle-btn').addEventListener('click', () => {
+            shuffleCards();
+        });
+
+        document.getElementById('grid-btn').addEventListener('click', () => {
+            arrangeGrid();
+        });
+
+        document.getElementById('reset-btn').addEventListener('click', () => {
+            resetGame();
+        });
+
+        document.getElementById('start-timer-btn').addEventListener('click', () => {
+            startTimer();
+        });
+
+        document.getElementById('stop-timer-btn').addEventListener('click', () => {
+            stopTimer();
+        });
+
+        document.getElementById('update-cards-btn').addEventListener('click', () => {
+            const jsonInput = document.getElementById('json-input').value;
+            try {
+                const newPairs = JSON.parse(jsonInput);
+                availablePairs = newPairs;
+                selectedPairs = [];
+                addPairs(5);
+            } catch (e) {
+                alert("Invalid JSON format. Please check your input.");
+            }
+        });
+
+        addPairs(5);
+
+        window.addEventListener('resize', () => {
+            canvas.width = Math.min(window.innerWidth * 0.8, 600);
+            canvas.height = Math.min(window.innerHeight * 0.6, 400);
+            draw();
+        });
+    </script>
+</body>
+</html>

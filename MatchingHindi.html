@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>मिलान खेल</title>
+  <style>
+    body {
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background-color: #f4f4f4;
+      height: 100vh;
+    }
+    canvas {
+      border: 1px solid #333;
+      background-color: #fff;
+    }
+    .container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin-top: 10px;
+      width: 100%;
+    }
+    .controls {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+    .buttons {
+      display: flex;
+      justify-content: center;
+      margin-top: 10px;
+      gap: 5px;
+    }
+    .container textarea {
+      width: 90%;
+      max-width: 600px;
+      height: 80px;
+      resize: none;
+      padding: 10px;
+      font-family: monospace;
+    }
+    .container button {
+      padding: 8px 15px;
+      background-color: #333;
+      color: #fff;
+      border: none;
+      cursor: pointer;
+    }
+    .container button:hover {
+      background-color: #555;
+    }
+    .instructions {
+      font-size: 14px;
+      color: #666;
+      margin-left: 10px;
+    }
+    .pair-controls {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin-top: 10px;
+      gap: 5px;
+    }
+    .timer-container {
+      display: flex;
+      align-items: center;
+      margin-left: 10px;
+      gap: 5px;
+    }
+    .timer-container input {
+      width: 70px;
+      padding: 5px;
+      text-align: center;
+    }
+    @media (max-width: 768px) {
+      canvas {
+        width: 90%;
+        height: 300px;
+      }
+      .container textarea {
+        height: 60px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+
+  <div class="controls">
+    <div class="instructions">जोड़े खोजें। कार्ड को पलटने के लिए क्लिक करें और खींचने के लिए ड्रैग करें।</div>
+  </div>
+
+  <div class="pair-controls">
+    <button id="add1-btn">+1 जोड़ा</button>
+    <button id="add5-btn">+5 जोड़े</button>
+    <button id="remove1-btn">-1 जोड़ा</button>
+    <button id="remove5-btn">-5 जोड़े</button>
+    <button id="shuffle-btn">फेरबदल</button>
+    <button id="grid-btn">ग्रिड</button>
+    <button id="reset-btn">रीसेट</button>
+    <div class="timer-container">
+      <input id="timer-input" type="text" value="01:00">
+      <button id="start-timer-btn">शुरू करें</button>
+      <button id="stop-timer-btn">रोकें</button>
+    </div>
+  </div>
+
+  <div class="container">
+    <textarea id="json-input" placeholder='उदाहरण: [{"term": "कुत्ता", "definition": "वफादार और पालने योग्य जानवर"}]'></textarea>
+    <button id="update-cards-btn">कार्ड अपडेट करें</button>
+    <p>प्रारंभ में यादृच्छिक रूप से 5 जोड़े जोड़े जाते हैं।</p>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    canvas.width = Math.min(window.innerWidth * 0.8, 600);
+    canvas.height = Math.min(window.innerHeight * 0.6, 400);
+
+    const cardWidth = 120;
+    const cardHeight = 80;
+    const padding = 10;
+    const distinctColors = [
+      '#FF5733', '#33FF57', '#3357FF', '#FF33A1', '#33FFF3', '#FF8C33', '#8C33FF', '#33FF8C', '#FF3333', '#3333FF',
+      '#A1FF33', '#FF5733', '#33A1FF', '#FF33FF', '#33FFA1', '#5733FF', '#FF33A1', '#F3FF33', '#FF8CFF', '#8CFF33'
+    ];
+    let cards = [];
+    let availablePairs = [
+      { term: "कुत्ता", definition: "वफादार और पालने योग्य जानवर" },
+      { term: "पहाड़", definition: "पृथ्वी की सतह की ऊँची प्राकृतिक ऊँचाई" },
+      { term: "समुद्र", definition: "नमक से भरा विशाल जल क्षेत्र" },
+      { term: "वृक्ष", definition: "लंबा पौधा जिसमें लकड़ी का तना होता है" },
+      { term: "आसमान", definition: "हमारे ऊपर का वह स्थान जहाँ सूरज और बादल होते हैं" },
+      { term: "फूल", definition: "पौधे का रंगीन भाग जो बीज बनाता है" },
+      { term: "नदी", definition: "प्राकृतिक रूप से बहता जल स्रोत" },
+      { term: "झील", definition: "धरती से घिरा स्थिर जल निकाय" },
+      { term: "बर्फ", definition: "आसमान से गिरने वाले सफेद हिमकण" },
+      { term: "सूरज", definition: "प्रकाश और ऊष्मा का मुख्य स्रोत, पृथ्वी का केंद्रीय तारा" }
+    ];
+    let selectedPairs = [];
+    let selectedCards = [];
+    let draggingCard = null;
+    let offsetX, offsetY;
+    let matchedPairs = 0;
+    let topZIndex = 0;
+    let lockFlip = false;
+    let timerInterval = null;
+    let timeRemaining = 60;
+
+    const synth = window.speechSynthesis;
+
+    class Card {
+      constructor(text, x, y, fullText, isTerm = false) {
+        this.text = text;
+        this.fullText = fullText;
+        this.x = x;
+        this.y = y;
+        this.width = cardWidth;
+        this.height = cardHeight;
+        this.isFlipped = false;
+        this.isMatched = false;
+        this.isTerm = isTerm;
+        this.matchColor = null;
+        this.showFullText = false;
+        this.zIndex = topZIndex++;
+      }
+
+      draw() {
+        ctx.save();
+        ctx.fillStyle = this.isMatched && this.matchColor ? this.matchColor : this.isFlipped ? "#FFD700" : "#aaa";
+        ctx.fillRect(this.x, this.y, this.width, this.height);
+        ctx.strokeStyle = "#000";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(this.x, this.y, this.width, this.height);
+
+        if (this.isFlipped || this.isMatched) {
+          ctx.fillStyle = "#000";
+          ctx.font = "12px Arial";
+          ctx.textAlign = "left";
+          ctx.textBaseline = "top";
+          const drawMethod = this.showFullText ? this.drawFullText : this.drawText;
+          drawMethod.call(this, ctx, this.text, this.x + padding, this.y + padding, this.width - 2 * padding);
+        }
+        ctx.restore();
+      }
+
+      drawText(ctx, text, x, y, maxWidth) {
+        const words = text.split(" ");
+        let line = "", lineHeight = 14;
+        for (let n = 0; n < words.length; n++) {
+          const testLine = line + words[n] + " ";
+          if (ctx.measureText(testLine).width > maxWidth && n > 0) {
+            ctx.fillText(line, x, y);
+            line = words[n] + " ";
+            y += lineHeight;
+            if (y + lineHeight > this.y + this.height - padding) {
+              ctx.fillText(line.trim() + "...", x, y);
+              return;
+            }
+          } else line = testLine;
+        }
+        ctx.fillText(line, x, y);
+      }
+
+      drawFullText(ctx, text, x, y, maxWidth) {
+        const words = text.split(" ");
+        let line = "", lineHeight = 14;
+        for (let n = 0; n < words.length; n++) {
+          const testLine = line + words[n] + " ";
+          if (ctx.measureText(testLine).width > maxWidth && n > 0) {
+            ctx.fillText(line, x, y);
+            line = words[n] + " ";
+            y += lineHeight;
+          } else line = testLine;
+        }
+        ctx.fillText(line, x, y);
+      }
+
+      contains(mx, my) {
+        return mx > this.x && mx < this.x + this.width && my > this.y && my < this.y + this.height;
+      }
+
+      flip() {
+        if (!this.isMatched && !this.isFlipped) {
+          this.isFlipped = true;
+          return true;
+        }
+        return false;
+      }
+
+      toggleFullText() {
+        this.showFullText = !this.showFullText;
+      }
+
+      speak() {
+        const utterance = new SpeechSynthesisUtterance(this.text);
+        utterance.lang = "hi-IN";
+        synth.cancel();
+        synth.speak(utterance);
+      }
+    }
+
+    function shuffleArray(array) {
+      for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+      }
+    }
+
+    function addPairs(count) {
+      const remaining = availablePairs.filter(p => !selectedPairs.includes(p));
+      shuffleArray(remaining);
+      const toAdd = remaining.slice(0, count);
+      toAdd.forEach(pair => {
+        cards.push(new Card(pair.term, Math.random() * (canvas.width - cardWidth), Math.random() * (canvas.height - cardHeight), pair.term, true));
+        cards.push(new Card(pair.definition.slice(0, 50) + "...", Math.random() * (canvas.width - cardWidth), Math.random() * (canvas.height - cardHeight), pair.definition, false));
+        selectedPairs.push(pair);
+      });
+      draw();
+    }
+
+    function removePairs(count) {
+      const removed = selectedPairs.splice(-count, count);
+      removed.forEach(pair => {
+        cards = cards.filter(c => c.fullText !== pair.term && c.fullText !== pair.definition);
+      });
+      draw();
+    }
+
+    function shuffleCards() {
+      cards.forEach(c => {
+        c.x = Math.random() * (canvas.width - cardWidth);
+        c.y = Math.random() * (canvas.height - cardHeight);
+      });
+      draw();
+    }
+
+    function arrangeGrid() {
+      const cols = Math.floor(canvas.width / (cardWidth + padding));
+      let x = padding, y = padding;
+      cards.forEach((card, i) => {
+        card.x = x;
+        card.y = y;
+        x += cardWidth + padding;
+        if ((i + 1) % cols === 0) {
+          x = padding;
+          y += cardHeight + padding;
+        }
+      });
+      draw();
+    }
+
+    function resetGame() {
+      selectedCards = [];
+      matchedPairs = 0;
+      cards.forEach(card => {
+        card.isFlipped = false;
+        card.isMatched = false;
+        card.matchColor = null;
+      });
+      shuffleCards();
+    }
+
+    function checkMatch() {
+      if (selectedCards.length === 2) {
+        const [a, b] = selectedCards;
+        if (a.isTerm !== b.isTerm) {
+          const p1 = availablePairs.find(p => p.term === a.text || p.definition === a.fullText);
+          const p2 = availablePairs.find(p => p.term === b.text || p.definition === b.fullText);
+          if (p1 && p2 && p1.term === p2.term) {
+            const color = distinctColors[matchedPairs % distinctColors.length];
+            a.isMatched = b.isMatched = true;
+            a.matchColor = b.matchColor = color;
+            matchedPairs++;
+            lockFlip = false;
+          } else {
+            setTimeout(() => {
+              a.isFlipped = b.isFlipped = false;
+              draw();
+              lockFlip = false;
+            }, 1000);
+          }
+        } else {
+          setTimeout(() => {
+            a.isFlipped = b.isFlipped = false;
+            draw();
+            lockFlip = false;
+          }, 1000);
+        }
+        selectedCards = [];
+      }
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      cards.sort((a, b) => a.zIndex - b.zIndex);
+      cards.forEach(card => card.draw());
+    }
+
+    function startTimer() {
+      const [m, s] = document.getElementById("timer-input").value.split(":").map(Number);
+      timeRemaining = m * 60 + s;
+      if (timerInterval) clearInterval(timerInterval);
+      timerInterval = setInterval(() => {
+        if (timeRemaining <= 0) {
+          clearInterval(timerInterval);
+          alert("समय समाप्त!");
+        } else {
+          timeRemaining--;
+          const min = String(Math.floor(timeRemaining / 60)).padStart(2, "0");
+          const sec = String(timeRemaining % 60).padStart(2, "0");
+          document.getElementById("timer-input").value = `${min}:${sec}`;
+        }
+      }, 1000);
+    }
+
+    function stopTimer() {
+      if (timerInterval) clearInterval(timerInterval);
+    }
+
+    canvas.addEventListener("mousedown", (e) => {
+      if (lockFlip) return;
+      const mx = e.clientX - canvas.offsetLeft;
+      const my = e.clientY - canvas.offsetTop;
+      for (const card of cards) {
+        if (card.contains(mx, my)) {
+          draggingCard = card;
+          offsetX = mx - card.x;
+          offsetY = my - card.y;
+          card.zIndex = topZIndex++;
+          if (card.flip()) {
+            selectedCards.push(card);
+            card.speak();
+            if (selectedCards.length === 2) {
+              lockFlip = true;
+              checkMatch();
+            }
+          } else if (card.isMatched) {
+            card.speak();
+          }
+          break;
+        }
+      }
+      draw();
+    });
+
+    canvas.addEventListener("mousemove", (e) => {
+      if (draggingCard) {
+        const mx = e.clientX - canvas.offsetLeft;
+        const my = e.clientY - canvas.offsetTop;
+        draggingCard.x = mx - offsetX;
+        draggingCard.y = my - offsetY;
+        draw();
+      }
+    });
+
+    canvas.addEventListener("mouseup", () => {
+      draggingCard = null;
+    });
+
+    document.getElementById("add1-btn").addEventListener("click", () => addPairs(1));
+    document.getElementById("add5-btn").addEventListener("click", () => addPairs(5));
+    document.getElementById("remove1-btn").addEventListener("click", () => removePairs(1));
+    document.getElementById("remove5-btn").addEventListener("click", () => removePairs(5));
+    document.getElementById("shuffle-btn").addEventListener("click", () => shuffleCards());
+    document.getElementById("grid-btn").addEventListener("click", () => arrangeGrid());
+    document.getElementById("reset-btn").addEventListener("click", () => resetGame());
+    document.getElementById("start-timer-btn").addEventListener("click", () => startTimer());
+    document.getElementById("stop-timer-btn").addEventListener("click", () => stopTimer());
+
+    document.getElementById("update-cards-btn").addEventListener("click", () => {
+      const input = document.getElementById("json-input").value;
+      try {
+        const newPairs = JSON.parse(input);
+        availablePairs = newPairs;
+        selectedPairs = [];
+        cards = [];
+        addPairs(5);
+      } catch (e) {
+        alert("अमान्य JSON प्रारूप। कृपया अपना इनपुट जांचें।");
+      }
+    });
+
+    addPairs(5);
+
+    window.addEventListener("resize", () => {
+      canvas.width = Math.min(window.innerWidth * 0.8, 600);
+      canvas.height = Math.min(window.innerHeight * 0.6, 400);
+      draw();
+    });
+  </script>
+</body>
+</html>
